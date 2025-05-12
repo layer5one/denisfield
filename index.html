@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Denis Starfield</title>
+    <style>
+        /* Basic reset and full-screen canvas styling */
+        body {
+            margin: 0;
+            overflow: hidden; /* Hide scrollbars */
+            background-color: #000; /* Black background for space effect */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block; /* Remove default inline spacing */
+            background-color: #000;
+            /* Canvas size will be set by JavaScript to match window */
+        }
+        /* Optional: Add a subtle message */
+        #loadingMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ccc;
+            font-family: sans-serif;
+            font-size: 1.5em;
+            display: none; /* Hidden initially */
+        }
+    </style>
+</head>
+<body>
+    <canvas id="starfieldCanvas"></canvas>
+    <div id="loadingMessage">Loading Denis...</div>
+
+    <script>
+        // --- Configuration ---
+        const NUM_FACES = 100;
+        const SPEED = 1.5;
+        const IMAGE_URL = 'https://i.imgur.com/7PjwdO3.png'; // Correct PNG extension
+        const MAX_DEPTH = 700;
+        // *** Adjusted Reset Threshold SIGNIFICANTLY ***
+        // We will set this inside setupCanvas once fieldOfView is known
+        let RESET_DEPTH_THRESHOLD = -100; // Default fallback, will be updated
+        const MAX_DRAW_SIZE_MULTIPLIER = 4;
+        const BASE_SCALE_MULTIPLIER = 0.12;
+
+        // --- Setup ---
+        const canvas = document.getElementById('starfieldCanvas');
+        const ctx = canvas.getContext('2d');
+        const loadingMessage = document.getElementById('loadingMessage');
+
+        let faces = [];
+        let canvasWidth, canvasHeight;
+        let centerX, centerY;
+        let fieldOfView; // Will be calculated based on canvas size
+
+        // --- Image Loading ---
+        const faceImage = new Image();
+        let imageLoaded = false;
+        faceImage.onload = () => {
+            console.log("Denis image loaded successfully.");
+            imageLoaded = true;
+            loadingMessage.style.display = 'none';
+            init();
+            animate();
+        };
+        faceImage.onerror = () => {
+            console.error("Failed to load the Denis image from:", IMAGE_URL);
+            loadingMessage.textContent = "Error loading image. Check filename/path.";
+            loadingMessage.style.color = 'red';
+            loadingMessage.style.display = 'block';
+        };
+        loadingMessage.style.display = 'block';
+        faceImage.src = IMAGE_URL;
+
+        // --- Face Object ---
+        class Face {
+            constructor() {
+                this.x = 0; this.y = 0; this.z = 0;
+                this.screenX = 0; this.screenY = 0; this.scale = 0;
+            }
+
+            reset() {
+                if (!canvasWidth || !canvasHeight || !fieldOfView) {
+                    this.z = MAX_DEPTH; this.x = 0; this.y = 0;
+                    return;
+                }
+                // Start further back, ensuring positive z
+                this.z = Math.random() * (MAX_DEPTH - fieldOfView * 0.5) + fieldOfView * 0.5;
+
+                const perspectiveFactor = fieldOfView / (fieldOfView + this.z);
+                const spreadFactor = 1.5;
+
+                const spreadX = canvasWidth / perspectiveFactor * spreadFactor;
+                const spreadY = canvasHeight / perspectiveFactor * spreadFactor;
+
+                this.x = Math.random() * spreadX - spreadX / 2;
+                this.y = Math.random() * spreadY - spreadY / 2;
+
+                // Initial calculation to avoid first frame jump
+                this.scale = fieldOfView / (fieldOfView + this.z);
+                this.screenX = centerX + (this.x * this.scale);
+                this.screenY = centerY + (this.y * this.scale);
+            }
+
+
+            update() {
+                if (!fieldOfView) return;
+                this.z -= SPEED;
+
+                // *** Check against the calculated RESET_DEPTH_THRESHOLD ***
+                if (this.z < RESET_DEPTH_THRESHOLD) {
+                    this.reset();
+                    return; // Skip perspective calculation for this frame
+                }
+
+                // Calculate scale
+                const denominator = fieldOfView + this.z;
+
+                // Use a small positive threshold for denominator to avoid division by zero/negative
+                // when z is very close to -fieldOfView
+                const effectiveDenominator = Math.max(0.1, denominator);
+
+                this.scale = fieldOfView / effectiveDenominator;
+                this.screenX = centerX + (this.x * this.scale);
+                this.screenY = centerY + (this.y * this.scale);
+
+                 // If z is truly behind reset threshold (e.g., due to large SPEED jump), reset now
+                 // This is a safety check, the main check is at the start of update()
+                 if (this.z < RESET_DEPTH_THRESHOLD - SPEED) {
+                    this.reset();
+                    return;
+                 }
+            }
+
+
+            draw() {
+                // Allow drawing as long as scale is positive and z hasn't gone extremely negative
+                // (The update function handles resetting based on RESET_DEPTH_THRESHOLD)
+                if (!imageLoaded || !faceImage.naturalWidth || this.scale <= 0 || this.z < RESET_DEPTH_THRESHOLD - MAX_DEPTH) { // Safety check for extreme negative z
+                    return;
+                }
+
+                const imgWidth = faceImage.naturalWidth;
+                const imgHeight = faceImage.naturalHeight;
+
+                let scaledWidth = imgWidth * this.scale * BASE_SCALE_MULTIPLIER;
+                let scaledHeight = imgHeight * this.scale * BASE_SCALE_MULTIPLIER;
+
+                // Apply size capping logic
+                const maxAllowedWidth = canvasWidth * MAX_DRAW_SIZE_MULTIPLIER;
+                const maxAllowedHeight = canvasHeight * MAX_DRAW_SIZE_MULTIPLIER;
+
+                if (scaledWidth > maxAllowedWidth || scaledHeight > maxAllowedHeight) {
+                    const widthRatio = scaledWidth / maxAllowedWidth;
+                    const heightRatio = scaledHeight / maxAllowedHeight;
+
+                    if (widthRatio > heightRatio) {
+                        scaledWidth = maxAllowedWidth;
+                        scaledHeight = imgHeight * (scaledWidth / imgWidth);
+                    } else {
+                        scaledHeight = maxAllowedHeight;
+                        scaledWidth = imgWidth * (scaledHeight / imgHeight);
+                    }
+                }
+
+                if (scaledWidth < 0.1 || scaledHeight < 0.1) {
+                    return;
+                }
+
+                const drawX = this.screenX - scaledWidth / 2;
+                const drawY = this.screenY - scaledHeight / 2;
+
+                // Final validation step for drawing parameters
+                if (!isFinite(drawX) || !isFinite(drawY) || !isFinite(scaledWidth) || !isFinite(scaledHeight) || scaledWidth <= 0 || scaledHeight <= 0) {
+                    // console.warn("Skipping draw due to invalid parameters:", { drawX, drawY, scaledWidth, scaledHeight, z: this.z, scale: this.scale });
+                    return;
+                }
+
+                // Draw the image
+                try {
+                    ctx.drawImage(
+                        faceImage,
+                        drawX,
+                        drawY,
+                        scaledWidth,
+                        scaledHeight
+                    );
+                } catch (e) {
+                    console.error("Error during drawImage:", e, { drawX, drawY, scaledWidth, scaledHeight });
+                }
+            }
+        }
+
+        // --- Initialization ---
+        function setupCanvas() {
+            canvasWidth = window.innerWidth;
+            canvasHeight = window.innerHeight;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            centerX = canvasWidth / 2;
+            centerY = canvasHeight / 2;
+            // Keep aggressive FOV
+            fieldOfView = Math.min(canvasWidth, canvasHeight) * 0.5;
+            // *** Set RESET_DEPTH_THRESHOLD based on FOV ***
+            RESET_DEPTH_THRESHOLD = -fieldOfView; // Reset when z gets to -FOV
+            console.log(`Canvas resized: ${canvasWidth}x${canvasHeight}, Center: (${centerX}, ${centerY}), FOV: ${fieldOfView}, Reset Threshold: ${RESET_DEPTH_THRESHOLD}`);
+        }
+
+        function init() {
+            if (!imageLoaded) return;
+            setupCanvas(); // Setup canvas first to get dimensions and FOV/Reset Threshold
+            if (faces.length !== NUM_FACES) {
+                faces = [];
+                 for (let i = 0; i < NUM_FACES; i++) {
+                    const face = new Face();
+                    faces.push(face);
+                    face.reset(); // Reset immediately
+                }
+            } else {
+                for (const face of faces) {
+                    face.reset();
+                }
+            }
+            console.log(`Initialized/Reset ${faces.length} faces.`);
+        }
+
+        // --- Animation Loop ---
+        let animationFrameId = null;
+        function animate() {
+            if (!imageLoaded) {
+                animationFrameId = requestAnimationFrame(animate);
+                return;
+            }
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            faces.sort((a, b) => b.z - a.z); // Furthest first -> closest last
+
+            for (const face of faces) {
+                face.update();
+                face.draw();
+            }
+            animationFrameId = requestAnimationFrame(animate);
+        }
+
+        // --- Event Listeners ---
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+             console.log("Window resize detected.");
+             clearTimeout(resizeTimeout);
+             resizeTimeout = setTimeout(() => {
+                 if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                 }
+                 init(); // Re-initialize positions and FOV/Reset Threshold
+                 if (imageLoaded) {
+                    animate(); // Restart animation
+                 }
+             }, 250);
+        });
+
+        // --- Start ---
+        if (faceImage.complete && !imageLoaded) {
+             console.log("Image was already cached.");
+             faceImage.onload();
+        } else if (!faceImage.src) {
+             console.error("Image source not set initially.");
+             loadingMessage.textContent = "Error: Image source missing.";
+             loadingMessage.style.color = 'red';
+             loadingMessage.style.display = 'block';
+        }
+
+    </script>
+</body>
+</html>
+```
+
+**Key Changes:**
+
+1.  **`RESET_DEPTH_THRESHOLD`:** Instead of a fixed negative number, it's now calculated within `setupCanvas()` and set to `-fieldOfView`. This dynamically links the reset point to the perspective setting.
+2.  **`Face.update()`:** The primary reset check now uses this dynamic `RESET_DEPTH_THRESHOLD`. Added slightly more robust handling around the denominator calculation.
+3.  **`Face.draw()`:** Minor adjustment to the safety check for extreme negative `z` values to align with the new reset logic.
+
+This should allow the faces to travel much deeper into negative `z` space, visually passing well beyond the camera before they get recycled, hopefully eliminating the premature "bloop" effect and achieving the desired fly-throu
